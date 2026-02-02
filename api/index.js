@@ -194,20 +194,22 @@ async function handleSend(req, res) {
       return res.status(400).json({ success: false, error: 'Missing chatId or message' });
     }
 
-    // Send message via ClawWatch Setup bot (already configured)
-    const botToken = process.env.CLAWWATCH_BOT_TOKEN;
+    // Use Ed's bot token if available (so messages appear in Ed chat)
+    // Falls back to ClawWatch Setup bot
+    const botToken = process.env.ED_BOT_TOKEN || process.env.CLAWWATCH_BOT_TOKEN;
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
     
-    // Format message from Watch
+    // Format message from Watch - clear it's from ClawWatch
     const timeStr = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    const formattedMessage = `⌚ [${timeStr} via ClawWatch]\n\n${message}`;
+    const formattedMessage = `⌚ *[ClawWatch ${timeStr}]*\n\n${message}`;
     
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: formattedMessage
+        text: formattedMessage,
+        parse_mode: 'Markdown'
       })
     });
 
