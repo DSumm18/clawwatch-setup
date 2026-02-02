@@ -15,8 +15,5 @@
       "src": "/api/verify",
       "dest": "/api/verify.js"
     }
-  ],
-  "env": {
-    "CLAWWATCH_BOT_TOKEN": "@clawwatch-bot-token"
-  }
+  ]
 }
