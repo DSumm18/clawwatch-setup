@@ -194,8 +194,8 @@ async function handleSend(req, res) {
       return res.status(400).json({ success: false, error: 'Missing chatId or message' });
     }
 
-    // Send message to Ed's bot (forwards to user's Telegram)
-    const edBotToken = process.env.ED_BOT_TOKEN || process.env.CLAWWATCH_BOT_TOKEN;
+    // Send message via ClawWatch Setup bot (already configured)
+    const botToken = process.env.CLAWWATCH_BOT_TOKEN;
     const url = `https://api.telegram.org/bot${edBotToken}/sendMessage`;
     
     // Format message from Watch
