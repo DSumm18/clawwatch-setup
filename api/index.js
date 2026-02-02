@@ -177,19 +177,71 @@ async function handleVerify(req, res) {
   }
 }
 
+async function handleSend(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  try {
+    const { chatId, sessionToken, message } = req.body;
+
+    if (!chatId || !message) {
+      return res.status(400).json({ success: false, error: 'Missing chatId or message' });
+    }
+
+    // Send message to Ed's bot (forwards to user's Telegram)
+    const edBotToken = process.env.ED_BOT_TOKEN || process.env.CLAWWATCH_BOT_TOKEN;
+    const url = `https://api.telegram.org/bot${edBotToken}/sendMessage`;
+    
+    // Format message from Watch
+    const timeStr = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const formattedMessage = `⌚ [${timeStr} via ClawWatch]\n\n${message}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: formattedMessage
+      })
+    });
+
+    const result = await response.json();
+    
+    if (result.ok) {
+      res.status(200).json({ success: true });
+    } else {
+      console.error('Telegram error:', result);
+      res.status(500).json({ success: false, error: 'Failed to send' });
+    }
+
+  } catch (error) {
+    console.error('Send error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+}
+
 export default async function handler(req, res) {
   const path = req.url || '';
   
-  if (req.method === 'POST' && req.body?.message) {
-    // Telegram webhook
+  if (req.method === 'POST' && req.body?.message && !req.body?.chatId) {
+    // Telegram webhook (has message object from Telegram)
     return handleWebhook(req, res);
+  } else if (path.includes('/send') || (req.method === 'POST' && req.body?.chatId && req.body?.message)) {
+    // Send message endpoint
+    return handleSend(req, res);
   } else if (req.method === 'POST' || req.method === 'OPTIONS') {
     // Verify endpoint
     return handleVerify(req, res);
   } else {
     res.status(200).json({ 
       service: 'ClawWatch Setup',
-      endpoints: ['/api/webhook', '/api/verify'],
+      endpoints: ['/api/webhook', '/api/verify', '/api/send'],
       pendingCodes: pendingCodes.size
     });
   }
