@@ -196,7 +196,7 @@ async function handleSend(req, res) {
 
     // Send message via ClawWatch Setup bot (already configured)
     const botToken = process.env.CLAWWATCH_BOT_TOKEN;
-    const url = `https://api.telegram.org/bot${edBotToken}/sendMessage`;
+    const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
     
     // Format message from Watch
     const timeStr = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
