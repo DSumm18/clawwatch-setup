@@ -5,7 +5,9 @@
 
 // Shared in-memory store
 const pendingCodes = new Map();
+const pendingResponses = new Map(); // chatId -> [messages]
 const CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const RESPONSE_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 
 function generateCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -177,6 +179,77 @@ async function handleVerify(req, res) {
   }
 }
 
+// Store a response from Ed to be fetched by Watch
+async function handleResponse(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  try {
+    const { chatId, message } = req.body;
+    if (!chatId || !message) {
+      return res.status(400).json({ success: false, error: 'Missing chatId or message' });
+    }
+
+    const chatIdStr = chatId.toString();
+    if (!pendingResponses.has(chatIdStr)) {
+      pendingResponses.set(chatIdStr, []);
+    }
+    
+    pendingResponses.get(chatIdStr).push({
+      text: message,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + RESPONSE_EXPIRY_MS
+    });
+
+    console.log(`Stored response for ${chatIdStr}: ${message.substring(0, 50)}...`);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Response store error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+}
+
+// Fetch pending responses for Watch
+async function handleMessages(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const chatId = url.searchParams.get('chatId');
+    
+    if (!chatId) {
+      return res.status(400).json({ success: false, error: 'Missing chatId' });
+    }
+
+    const chatIdStr = chatId.toString();
+    const messages = pendingResponses.get(chatIdStr) || [];
+    
+    // Filter expired and return valid messages
+    const now = Date.now();
+    const validMessages = messages.filter(m => now < m.expiresAt);
+    
+    // Clear fetched messages
+    pendingResponses.set(chatIdStr, []);
+    
+    console.log(`Fetched ${validMessages.length} messages for ${chatIdStr}`);
+    
+    res.status(200).json({ 
+      success: true, 
+      messages: validMessages.map(m => ({ text: m.text, timestamp: m.timestamp }))
+    });
+  } catch (error) {
+    console.error('Messages fetch error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+}
+
 async function handleSend(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -216,6 +289,26 @@ async function handleSend(req, res) {
     const result = await response.json();
     
     if (result.ok) {
+      // Also notify OpenClaw webhook so Ed sees the message
+      try {
+        const openclawWebhook = process.env.OPENCLAW_WEBHOOK_URL;
+        if (openclawWebhook) {
+          await fetch(openclawWebhook, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: {
+                chat: { id: chatId },
+                from: { id: chatId, first_name: 'ClawWatch' },
+                text: `[ClawWatch] ${message}`,
+                date: Math.floor(Date.now() / 1000)
+              }
+            })
+          });
+        }
+      } catch (e) {
+        console.log('OpenClaw notify failed:', e);
+      }
       res.status(200).json({ success: true });
     } else {
       console.error('Telegram error:', result);
@@ -231,20 +324,31 @@ async function handleSend(req, res) {
 export default async function handler(req, res) {
   const path = req.url || '';
   
-  if (req.method === 'POST' && req.body?.message && !req.body?.chatId) {
+  // Route based on path and method
+  if (path.includes('/messages') && req.method === 'GET') {
+    // Watch fetches responses
+    return handleMessages(req, res);
+  } else if (path.includes('/response') && req.method === 'POST') {
+    // Ed stores a response
+    return handleResponse(req, res);
+  } else if (req.method === 'POST' && req.body?.message && !req.body?.chatId) {
     // Telegram webhook (has message object from Telegram)
     return handleWebhook(req, res);
-  } else if (path.includes('/send') || (req.method === 'POST' && req.body?.chatId && req.body?.message)) {
+  } else if (path.includes('/send') || (req.method === 'POST' && req.body?.chatId && req.body?.message && !path.includes('/response'))) {
     // Send message endpoint
     return handleSend(req, res);
   } else if (req.method === 'POST' || req.method === 'OPTIONS') {
     // Verify endpoint
     return handleVerify(req, res);
+  } else if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.status(200).end();
   } else {
     res.status(200).json({ 
       service: 'ClawWatch Setup',
-      endpoints: ['/api/webhook', '/api/verify', '/api/send'],
-      pendingCodes: pendingCodes.size
+      endpoints: ['/api/webhook', '/api/verify', '/api/send', '/api/response', '/api/messages'],
+      pendingCodes: pendingCodes.size,
+      pendingResponses: pendingResponses.size
     });
   }
 }
